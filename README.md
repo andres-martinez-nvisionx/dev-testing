@@ -176,15 +176,52 @@ kubectl exec -n default $NATS_POD -- nats consumer info CONTENT_FETCH content-fe
 
 ### C. Verificación en S3
 
-El Content Service persiste los samples en S3 (bucket configurado vía `contentService.s3Bucket` en helm).
+El Content Service persiste los samples en S3. Por defecto usa dos buckets:
+
+- `nvisionx-raw-content-cache-12345` — donde el connector sube directo
+- `nvisionx-processed-content-cache-12345` — para contenido transformado
 
 ```bash
 # Ver dónde escribe el content service
 kubectl exec deployment/applications-content-service -n default -- env | grep -iE "bucket|s3"
-
-# Listar objetos recientes
-aws s3 ls s3://<bucket>/<prefix>/ --recursive --human-readable | tail -20
 ```
+
+#### Encontrar el archivo de un sample específico
+
+El path en S3 se deriva del **sha256 de la URN** con sharding por los primeros 2 chars:
+
+```
+s3://<bucket>/{sha256[:2]}/{sha256}
+```
+
+Para computar el path de una URN:
+
+```bash
+python3 -c "import hashlib; urn='nx:postgresql:v1?access=postgresql-access-001&pqn=sales.public.customers.email'; h=hashlib.sha256(urn.encode()).hexdigest(); print(f'shard:  {h[:2]}/'); print(f'key:    {h[:2]}/{h}'); print(f'sha256: {h}')"
+```
+
+Salida ejemplo:
+```
+shard:  90/
+key:    90/909869c5ee47daba6e375cd14afd0e98283bc7e817b63ec12af3b0bb02fb12d9
+sha256: 909869c5ee47daba6e375cd14afd0e98283bc7e817b63ec12af3b0bb02fb12d9
+```
+
+Una vez que tenés el key:
+
+```bash
+# Bajar y mirar el contenido (requiere s3:GetObject sobre el bucket)
+aws s3 cp s3://nvisionx-raw-content-cache-12345/<key> /tmp/sample.txt --region us-east-1
+cat /tmp/sample.txt
+```
+
+> ⚠️ El bastion EKS NO tiene permisos sobre estos buckets. Para listar/leer S3 hay que usar credenciales personales (SSO de Nvision-X) o la AWS Console web.
+
+#### Notas sobre el contenido
+
+- Formato: **ASCII text, un valor por línea** (newline-delimited)
+- Cada upload con la misma URN **sobrescribe** el anterior (no hay versionado por timestamp)
+- `TABLESAMPLE SYSTEM (10)` produce diferentes muestras en cada run, así que el contenido (y el sha256 del payload) varían entre ejecuciones aunque la URN sea idéntica
 
 ### D. Verificación gRPC desde el kickoff
 

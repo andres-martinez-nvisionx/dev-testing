@@ -31,7 +31,7 @@ source .venv/bin/activate
 
 echo ""
 echo "=== Installing Python dependencies ==="
-pip install --no-cache-dir grpcio protobuf requests
+pip install --no-cache-dir grpcio protobuf requests nats-py
 
 # Install proto_py package in editable mode
 pip install --no-cache-dir -e ./proto_py

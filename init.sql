@@ -579,6 +579,17 @@ GRANT SELECT ON user_funnel TO analytics_reader;
 CREATE SCHEMA content_caps;
 GRANT USAGE ON SCHEMA content_caps TO analytics_reader, analytics_writer, connector_user;
 
+-- ---- single_row: 1 row — phase-2 at 100% always finds it ----
+-- Edge case: 1 row vs MinRows=50. Phase-1 at 10% TABLESAMPLE SYSTEM almost
+-- always returns 0 (binary block sampling on a 1-page table). Phase-2 ramps
+-- to 100% and always finds the row → COMPLETED with content_size = len(value).
+CREATE TABLE content_caps.single_row (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT   NOT NULL
+);
+INSERT INTO content_caps.single_row (sample_col) VALUES ('sr_0001_only-row');
+GRANT SELECT ON content_caps.single_row TO analytics_reader, connector_user;
+
 -- ---- tiny_30: phase-2 ramps to 100% (small table, SYSTEM is binary) ----
 CREATE TABLE content_caps.tiny_30 (
     id          SERIAL PRIMARY KEY,

@@ -565,3 +565,95 @@ GROUP BY event_type
 ORDER BY total_events DESC;
 
 GRANT SELECT ON user_funnel TO analytics_reader;
+
+
+-- ---------------------------------------------------------------------------
+-- Schema: content_caps
+--
+-- Test fixtures for the postgresql connector content mode. Each table
+-- exercises a specific path of the sampling algorithm or a specific cap.
+-- Test matrix: dev-testing/CONTENT_CAPS_TEST_PLAN.md
+--
+-- Target column is always `sample_col`. Other columns are noise.
+-- ---------------------------------------------------------------------------
+CREATE SCHEMA content_caps;
+GRANT USAGE ON SCHEMA content_caps TO analytics_reader, analytics_writer, connector_user;
+
+-- ---- tiny_30: phase-2 ramps to 100% (small table, SYSTEM is binary) ----
+CREATE TABLE content_caps.tiny_30 (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT   NOT NULL
+);
+INSERT INTO content_caps.tiny_30 (sample_col)
+SELECT 'tiny_' || lpad(i::text, 4, '0')
+FROM generate_series(1, 30) AS i;
+GRANT SELECT ON content_caps.tiny_30 TO analytics_reader, connector_user;
+
+-- ---- medium_500: phase-2 with moderate ramp (~22%) ----
+CREATE TABLE content_caps.medium_500 (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT   NOT NULL
+);
+INSERT INTO content_caps.medium_500 (sample_col)
+SELECT 'medium_' || lpad(i::text, 6, '0')
+FROM generate_series(1, 500) AS i;
+GRANT SELECT ON content_caps.medium_500 TO analytics_reader, connector_user;
+
+-- ---- large_200k: LIMIT MaxRows caps phase-1, no phase-2 ----
+CREATE TABLE content_caps.large_200k (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT   NOT NULL
+);
+INSERT INTO content_caps.large_200k (sample_col)
+SELECT 'large_' || lpad(i::text, 7, '0')
+FROM generate_series(1, 200000) AS i;
+GRANT SELECT ON content_caps.large_200k TO analytics_reader, connector_user;
+
+-- ---- null_heavy: 80% NULL — IS NOT NULL filter post-sample, aggressive ramp ----
+CREATE TABLE content_caps.null_heavy (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT
+);
+INSERT INTO content_caps.null_heavy (sample_col)
+SELECT CASE
+           WHEN i % 5 = 0 THEN 'nh_' || lpad(i::text, 4, '0')
+           ELSE NULL
+       END
+FROM generate_series(1, 500) AS i;
+GRANT SELECT ON content_caps.null_heavy TO analytics_reader, connector_user;
+
+-- ---- fat_rows: ~12 KB ASCII per row — no-regression for full-value upload ----
+-- After removing the per-row LEFT() cap (aligning with snowflake), each
+-- sampled row passes through untruncated. Expected per-row contribution is
+-- the full 12008 bytes. Prefix `fr_NNNN_` identifies which rows were sampled.
+CREATE TABLE content_caps.fat_rows (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT   NOT NULL
+);
+INSERT INTO content_caps.fat_rows (sample_col)
+SELECT 'fr_' || lpad(i::text, 4, '0') || '_' || repeat('x', 12000)
+FROM generate_series(1, 200) AS i;
+GRANT SELECT ON content_caps.fat_rows TO analytics_reader, connector_user;
+
+-- ---- multibyte_col: 4-byte UTF-8 — no-regression for multibyte content ----
+-- Originally added to demonstrate that LEFT() counted characters not bytes.
+-- After per-row cap removal, this fixture validates that 10008-char values
+-- with 4-byte emoji codepoints pass through untruncated (~40008 bytes/row).
+-- Prefix `mb_NNNN_` (ASCII) identifies which rows were sampled.
+CREATE TABLE content_caps.multibyte_col (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT   NOT NULL
+);
+INSERT INTO content_caps.multibyte_col (sample_col)
+SELECT 'mb_' || lpad(i::text, 4, '0') || '_' || repeat('🌟', 10000)
+FROM generate_series(1, 200) AS i;
+GRANT SELECT ON content_caps.multibyte_col TO analytics_reader, connector_user;
+
+-- ---- all_null: empty document path ----
+CREATE TABLE content_caps.all_null (
+    id          SERIAL PRIMARY KEY,
+    sample_col  TEXT
+);
+INSERT INTO content_caps.all_null (sample_col)
+SELECT NULL FROM generate_series(1, 100) AS i;
+GRANT SELECT ON content_caps.all_null TO analytics_reader, connector_user;
